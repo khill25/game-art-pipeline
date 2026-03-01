@@ -1,29 +1,44 @@
 """Pixel art style — prompt templates and post-processing for retro game sprites."""
 
 import io
+from typing import Optional
 from PIL import Image
 
 from .base import Style, StyleConfig
 from game_art.processing.palette import enforce_palette
-from game_art.processing.resize import nearest_neighbor_downscale
+from game_art.processing.resize import nearest_neighbor_downscale, trim_transparent, center_on_canvas
+from game_art.processing.background import auto_remove_background
 
 
 # Category-specific prompt hints
 CATEGORY_HINTS = {
-    "weapon": "game weapon sprite, single item, centered",
-    "enemy": "enemy creature sprite, game monster, full body",
-    "character": "hero character sprite, game protagonist, full body, front-facing",
-    "pickup": "collectible item sprite, pickup icon, centered",
+    "weapon": "game weapon sprite, single item only, centered, isolated object",
+    "enemy": "enemy creature sprite, game monster, full body, single character",
+    "character": "hero character sprite, game protagonist, full body, front-facing, single character",
+    "pickup": "collectible item sprite, pickup icon, centered, single item only",
     "tile": "seamless game tile, top-down, tileable texture",
-    "icon": "game icon, UI element, clean simple design",
+    "icon": "game icon, UI element, clean simple design, single icon",
     "effect": "visual effect sprite, magic spell, glowing energy",
-    "boss": "large boss creature sprite, imposing, detailed",
-    "npc": "NPC character sprite, full body, front-facing",
+    "boss": "large boss creature sprite, imposing, detailed, full body, single character",
+    "npc": "NPC character sprite, full body, front-facing, single character",
+}
+
+# Per-category recommended output sizes (can be overridden)
+CATEGORY_SIZES = {
+    "weapon": 48,
+    "enemy": 32,
+    "character": 32,
+    "pickup": 24,
+    "tile": 32,
+    "icon": 32,
+    "effect": 48,
+    "boss": 64,
+    "npc": 32,
 }
 
 BASE_POSITIVE = (
     "pixel art, {category_hint}, {prompt}, "
-    "retro game style, clean pixels, sharp edges, transparent background, "
+    "retro game style, clean pixels, sharp edges, solid black background, "
     "16-bit era, sprite, centered composition, no anti-aliasing"
 )
 
@@ -31,18 +46,41 @@ BASE_NEGATIVE = (
     "blurry, smooth, realistic, photo, 3d render, text, watermark, "
     "signature, frame, border, multiple objects, busy background, "
     "anti-aliased, gradient shading, noisy, jpeg artifacts, "
-    "low quality, deformed, ugly"
+    "low quality, deformed, ugly, grid, checkerboard pattern, "
+    "extra items, additional objects, multiple sprites, "
+    "cropped, cut off, partial"
 )
 
 
 class PixelArtStyle(Style):
     """Pixel art style for retro game sprites.
 
-    Generates at 512x512, then downscales with nearest-neighbor
-    interpolation and optionally enforces a color palette.
+    Generates at 512x512, removes background, trims, downscales with
+    nearest-neighbor interpolation, and optionally enforces a color palette.
     """
 
-    def __init__(self, palette: list[str] = None, target_size: int = 32):
+    def __init__(
+        self,
+        palette: list[str] = None,
+        target_size: int = 32,
+        lora: Optional[str] = None,
+        lora_weight: float = 0.8,
+        use_category_sizes: bool = False,
+        remove_bg: bool = True,
+        enforce_colors: bool = False,
+    ):
+        """
+        Args:
+            palette: Hex color strings for palette hints in prompts.
+            target_size: Default output size in pixels.
+            lora: LoRA name to inject in prompt (e.g., "pixel-art-xl-v1.1").
+            lora_weight: LoRA weight (0.0-1.0).
+            use_category_sizes: If True, use per-category sizes instead of target_size.
+            remove_bg: If True, auto-remove background in post-processing.
+            enforce_colors: If True, remap all pixels to palette colors.
+                           Usually too aggressive — leave False and let the
+                           palette prompt hints guide SD naturally.
+        """
         config = StyleConfig(
             target_size=target_size,
             gen_width=512,
@@ -50,15 +88,32 @@ class PixelArtStyle(Style):
             palette=palette or [],
         )
         super().__init__(config)
+        self.lora = lora
+        self.lora_weight = lora_weight
+        self.use_category_sizes = use_category_sizes
+        self.remove_bg = remove_bg
+        self.enforce_colors = enforce_colors
+        self._current_category = "item"
+
+    def _get_target_size(self, category: str) -> int:
+        """Get the target output size for a category."""
+        if self.use_category_sizes:
+            return CATEGORY_SIZES.get(category, self.config.target_size)
+        return self.config.target_size
 
     def build_prompt(self, base_prompt: str, category: str = "item") -> str:
+        self._current_category = category
         hint = CATEGORY_HINTS.get(category, f"game {category} sprite, centered")
         prompt = BASE_POSITIVE.format(category_hint=hint, prompt=base_prompt)
 
-        # Add palette colors as prompt hints if available
+        # Add palette colors as prompt hints
         if self.config.palette:
             color_str = ", ".join(self.config.palette[:6])
             prompt += f", color palette: {color_str}"
+
+        # Inject LoRA trigger
+        if self.lora:
+            prompt += f", <lora:{self.lora}:{self.lora_weight}>"
 
         return prompt
 
@@ -75,12 +130,26 @@ class PixelArtStyle(Style):
     def post_process(self, image_bytes: bytes) -> bytes:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
 
-        # Step 1: Downscale to target size with nearest-neighbor
-        if img.width != self.config.target_size or img.height != self.config.target_size:
-            img = nearest_neighbor_downscale(img, self.config.target_size)
+        target = self._get_target_size(self._current_category)
 
-        # Step 2: Enforce palette if one was provided
-        if self.config.palette:
+        # Step 1: Remove background
+        if self.remove_bg:
+            img = auto_remove_background(img, method="auto")
+
+        # Step 2: Trim transparent borders
+        img = trim_transparent(img, padding=4)
+
+        # Step 3: Fit to square canvas (preserve aspect ratio)
+        max_dim = max(img.width, img.height)
+        if max_dim > 0:
+            img = center_on_canvas(img, max_dim)
+
+        # Step 4: Downscale to target size with nearest-neighbor
+        if img.width != target or img.height != target:
+            img = nearest_neighbor_downscale(img, target)
+
+        # Step 5: Enforce palette only if explicitly requested
+        if self.enforce_colors and self.config.palette:
             img = enforce_palette(img, self.config.palette)
 
         buf = io.BytesIO()

@@ -40,7 +40,7 @@ async def test_generate_sprite(generator):
 @pytest.mark.asyncio
 async def test_generate_sprite_with_palette():
     provider = PlaceholderProvider()
-    style = PixelArtStyle(palette=["#ff0000", "#00ff00", "#0000ff"], target_size=32)
+    style = PixelArtStyle(palette=["#ff0000", "#00ff00", "#0000ff"], target_size=32, enforce_colors=True, remove_bg=False)
     gen = SpriteGenerator(provider, style)
 
     result = await gen.generate("fire sword", category="weapon")
