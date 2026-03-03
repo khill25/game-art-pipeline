@@ -1,0 +1,59 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 42,
+      "steps": 25,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "pixelArtDiffusionXL_spriteShaper.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pixel art, game weapon sprite, single item only, centered, isolated object, fire sword — blazing blade of flame, retro game style, clean pixels, sharp edges, 16-bit era, sprite, centered composition, no anti-aliasing, fantasy",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, smooth, realistic, photo, 3d render, text, watermark, signature, frame, border, multiple objects, busy background, anti-aliased, gradient shading, noisy, jpeg artifacts, low quality, deformed, ugly, grid, checkerboard pattern, extra items, additional objects, multiple sprites, cropped, cut off, partial, hand, arm, fingers, holding, grip, ability icon, spell icon, UI button, circular frame, multiple weapons, person, character, body, torso",
+      "clip": ["4", 1]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "game_art",
+      "images": ["8", 0]
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 42,
+      "steps": 25,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["5", 0]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "pixelArtDiffusionXL_spriteShaper.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "pixel art, hero character sprite, full body standing pose, single character only, front-facing, idle stance, no ground, no base, no pedestal, no platform, no shadow circle, no grass, floating, isolated, white background, dark knight — armored warrior with glowing red eyes, retro game style, clean pixels, sharp edges, 16-bit era, sprite, centered composition, no anti-aliasing, gothic, dark",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, smooth, realistic, photo, 3d render, text, watermark, signature, frame, border, multiple objects, busy background, anti-aliased, gradient shading, noisy, jpeg artifacts, low quality, deformed, ugly, grid, checkerboard pattern, extra items, additional objects, multiple sprites, cropped, cut off, partial, base, pedestal, platform, ground circle, grass, shadow circle, tabletop miniature, figurine base, floor, ground, multiple characters, crowd, extra limbs",
+      "clip": ["4", 1]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["3", 0],
+      "vae": ["4", 2]
+    }
+  },
+  "12": {
+    "class_type": "BiRefNetRMBG",
+    "inputs": {
+      "model": "BiRefNet-general",
+      "image": ["8", 0],
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#000000"
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "game_art",
+      "images": ["12", 0]
+    }
+  }
+}
