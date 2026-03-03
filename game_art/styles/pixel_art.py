@@ -8,6 +8,7 @@ from .base import Style, StyleConfig
 from game_art.processing.palette import enforce_palette
 from game_art.processing.resize import nearest_neighbor_downscale, trim_transparent, center_on_canvas
 from game_art.processing.background import auto_remove_background
+from game_art.processing.orientation import normalize_orientation
 
 
 # Category-specific prompt hints
@@ -55,8 +56,12 @@ BASE_NEGATIVE = (
 class PixelArtStyle(Style):
     """Pixel art style for retro game sprites.
 
-    Generates at 512x512, removes background, trims, downscales with
-    nearest-neighbor interpolation, and optionally enforces a color palette.
+    V1 mode: Generates at 512x512, Python bg removal, trim, NN downscale.
+    V2 mode: Generates at 1024x1024, provider-side rembg, Python cleanup,
+             orientation on hi-res, LANCZOS 256px reference, NN 32px game sprite.
+
+    The v2 pipeline is used when use_v2_prompts=True (default). The v1 post_process()
+    path remains for backward compatibility with existing callers.
     """
 
     def __init__(
@@ -68,6 +73,8 @@ class PixelArtStyle(Style):
         use_category_sizes: bool = False,
         remove_bg: bool = True,
         enforce_colors: bool = False,
+        normalize_orient: bool = True,
+        use_v2_prompts: bool = True,
     ):
         """
         Args:
@@ -80,11 +87,15 @@ class PixelArtStyle(Style):
             enforce_colors: If True, remap all pixels to palette colors.
                            Usually too aggressive — leave False and let the
                            palette prompt hints guide SD naturally.
+            normalize_orient: If True, rotate weapons to canonical tip-up pose.
+            use_v2_prompts: If True, generate at 1024px and use v2 prompt builder.
+                           v2 produces stronger isolation and category-specific negatives.
         """
+        gen_size = 1024 if use_v2_prompts else 512
         config = StyleConfig(
             target_size=target_size,
-            gen_width=512,
-            gen_height=512,
+            gen_width=gen_size,
+            gen_height=gen_size,
             palette=palette or [],
         )
         super().__init__(config)
@@ -93,6 +104,8 @@ class PixelArtStyle(Style):
         self.use_category_sizes = use_category_sizes
         self.remove_bg = remove_bg
         self.enforce_colors = enforce_colors
+        self.normalize_orient = normalize_orient
+        self.use_v2_prompts = use_v2_prompts
         self._current_category = "item"
 
     def _get_target_size(self, category: str) -> int:
@@ -103,6 +116,18 @@ class PixelArtStyle(Style):
 
     def build_prompt(self, base_prompt: str, category: str = "item") -> str:
         self._current_category = category
+
+        if self.use_v2_prompts:
+            from game_art.pipeline.prompts import build_prompt_v2
+            positive, _ = build_prompt_v2(
+                base_prompt=base_prompt,
+                category=category,
+                palette=self.config.palette or None,
+                lora=self.lora,
+                lora_weight=self.lora_weight,
+            )
+            return positive
+
         hint = CATEGORY_HINTS.get(category, f"game {category} sprite, centered")
         prompt = BASE_POSITIVE.format(category_hint=hint, prompt=base_prompt)
 
@@ -118,14 +143,26 @@ class PixelArtStyle(Style):
         return prompt
 
     def build_negative_prompt(self) -> str:
+        if self.use_v2_prompts:
+            from game_art.pipeline.prompts import build_prompt_v2
+            _, negative = build_prompt_v2(
+                base_prompt="",
+                category=self._current_category,
+            )
+            return negative
+
         return BASE_NEGATIVE
 
     def get_gen_params(self) -> dict:
-        return {
+        params = {
             "steps": 25,
             "cfg_scale": 7.5,
             "sampler": "DPM++ 2M Karras",
         }
+        if self.lora:
+            params["lora"] = self.lora
+            params["lora_weight"] = self.lora_weight
+        return params
 
     def post_process(self, image_bytes: bytes) -> bytes:
         img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
@@ -136,19 +173,23 @@ class PixelArtStyle(Style):
         if self.remove_bg:
             img = auto_remove_background(img, method="auto")
 
-        # Step 2: Trim transparent borders
+        # Step 2: Normalize orientation (weapons tip-up, etc.)
+        if self.normalize_orient:
+            img = normalize_orientation(img, category=self._current_category)
+
+        # Step 3: Trim transparent borders
         img = trim_transparent(img, padding=4)
 
-        # Step 3: Fit to square canvas (preserve aspect ratio)
+        # Step 4: Fit to square canvas (preserve aspect ratio)
         max_dim = max(img.width, img.height)
         if max_dim > 0:
             img = center_on_canvas(img, max_dim)
 
-        # Step 4: Downscale to target size with nearest-neighbor
+        # Step 5: Downscale to target size with nearest-neighbor
         if img.width != target or img.height != target:
             img = nearest_neighbor_downscale(img, target)
 
-        # Step 5: Enforce palette only if explicitly requested
+        # Step 6: Enforce palette only if explicitly requested
         if self.enforce_colors and self.config.palette:
             img = enforce_palette(img, self.config.palette)
 

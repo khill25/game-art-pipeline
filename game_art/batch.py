@@ -1,6 +1,7 @@
 """Batch sprite generation with consistent style across multiple assets."""
 
 import asyncio
+import io
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -28,6 +29,10 @@ class SpriteResult:
     output_path: Optional[Path] = None
     png_bytes: Optional[bytes] = None
     error: Optional[str] = None
+    pivots: Optional[list] = None  # list of PivotPoint dicts if detection was run
+    reference_path: Optional[Path] = None  # 256px LANCZOS reference image
+    validation_issues: list[str] = field(default_factory=list)
+    attempts: int = 1
 
     @property
     def success(self) -> bool:
@@ -56,11 +61,19 @@ class BatchGenerator:
         output_dir: Optional[Path] = None,
         concurrency: int = 2,
         on_progress: Optional[callable] = None,
+        detect_pivots: bool = False,
+        use_v2: bool = True,
+        reference_size: int = 256,
+        max_retries: int = 3,
     ):
         self.generator = SpriteGenerator(provider, style)
         self.output_dir = output_dir
         self.concurrency = concurrency
         self.on_progress = on_progress
+        self.detect_pivots = detect_pivots
+        self.use_v2 = use_v2
+        self.reference_size = reference_size
+        self.max_retries = max_retries
 
     async def generate_batch(
         self,
@@ -91,27 +104,135 @@ class BatchGenerator:
     async def _generate_single(self, req: SpriteRequest) -> SpriteResult:
         """Generate a single sprite, handling errors gracefully."""
         try:
-            if self.output_dir:
-                subdir = req.output_subdir or req.category
-                out_path = self.output_dir / subdir / f"{req.id}.png"
-                path = await self.generator.generate_to_file(
-                    prompt=req.prompt,
-                    output_path=out_path,
-                    category=req.category,
-                    seed=req.seed,
-                    extra_positive=req.extra_positive,
-                )
-                return SpriteResult(request=req, output_path=path)
+            if self.use_v2:
+                return await self._generate_single_v2(req)
             else:
-                png = await self.generator.generate(
-                    prompt=req.prompt,
-                    category=req.category,
-                    seed=req.seed,
-                    extra_positive=req.extra_positive,
-                )
-                return SpriteResult(request=req, png_bytes=png)
+                return await self._generate_single_v1(req)
         except Exception as e:
             return SpriteResult(request=req, error=str(e))
+
+    async def _generate_single_v1(self, req: SpriteRequest) -> SpriteResult:
+        """V1 pipeline: style handles all prompt building and post-processing."""
+        pivots = None
+        if self.output_dir:
+            subdir = req.output_subdir or req.category
+            out_path = self.output_dir / subdir / f"{req.id}.png"
+            path = await self.generator.generate_to_file(
+                prompt=req.prompt,
+                output_path=out_path,
+                category=req.category,
+                seed=req.seed,
+                extra_positive=req.extra_positive,
+            )
+            if self.detect_pivots:
+                pivots = self._run_pivot_detection(path, req.category)
+            return SpriteResult(request=req, output_path=path, pivots=pivots)
+        else:
+            png = await self.generator.generate(
+                prompt=req.prompt,
+                category=req.category,
+                seed=req.seed,
+                extra_positive=req.extra_positive,
+            )
+            if self.detect_pivots:
+                pivots = self._run_pivot_detection_bytes(png, req.category)
+            return SpriteResult(request=req, png_bytes=png, pivots=pivots)
+
+    async def _generate_single_v2(self, req: SpriteRequest) -> SpriteResult:
+        """V2 pipeline: multi-stage with provider-side cleanup and validation."""
+        from game_art.generators.sprite import SpriteContext
+
+        ctx = await self.generator.generate_v2(
+            prompt=req.prompt,
+            category=req.category,
+            seed=req.seed,
+            extra_positive=req.extra_positive,
+            max_retries=self.max_retries,
+            reference_size=self.reference_size,
+            target_size=self.generator.style.config.target_size,
+        )
+
+        pivots = None
+        output_path = None
+        reference_path = None
+        png_bytes = None
+
+        if self.output_dir and ctx.final_image:
+            # Save final game sprite
+            subdir = req.output_subdir or req.category
+            out_path = self.output_dir / subdir / f"{req.id}.png"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            ctx.final_image.save(out_path, format="PNG")
+            output_path = out_path
+
+            # Save reference image
+            if ctx.reference_image:
+                ref_subdir = subdir.replace("sprites/", "references/", 1)
+                if ref_subdir == subdir:
+                    ref_subdir = f"references/{subdir}"
+                ref_path = self.output_dir / ref_subdir / f"{req.id}.png"
+                ref_path.parent.mkdir(parents=True, exist_ok=True)
+                ctx.reference_image.save(ref_path, format="PNG")
+                reference_path = ref_path
+
+            # Pivot detection on reference (better quality than 32px)
+            if self.detect_pivots and ctx.reference_image:
+                pivots = self._run_pivot_detection_image(
+                    ctx.reference_image, req.category
+                )
+        elif ctx.final_image:
+            buf = io.BytesIO()
+            ctx.final_image.save(buf, format="PNG")
+            png_bytes = buf.getvalue()
+            if self.detect_pivots and ctx.reference_image:
+                pivots = self._run_pivot_detection_image(
+                    ctx.reference_image, req.category
+                )
+
+        return SpriteResult(
+            request=req,
+            output_path=output_path,
+            png_bytes=png_bytes,
+            pivots=pivots,
+            reference_path=reference_path,
+            validation_issues=ctx.issues,
+            attempts=ctx.attempt,
+        )
+
+    @staticmethod
+    def _run_pivot_detection(image_path: Path, category: str) -> list[dict]:
+        """Detect pivots from a saved sprite file."""
+        from PIL import Image as PILImage
+        from game_art.processing.pivot import detect_pivots
+        img = PILImage.open(image_path).convert("RGBA")
+        pivots = detect_pivots(img, category=category)
+        return [
+            {"name": p.name, "x": round(p.x, 4), "y": round(p.y, 4), "confidence": round(p.confidence, 3)}
+            for p in pivots
+        ]
+
+    @staticmethod
+    def _run_pivot_detection_bytes(png_bytes: bytes, category: str) -> list[dict]:
+        """Detect pivots from PNG bytes."""
+        from PIL import Image as PILImage
+        from game_art.processing.pivot import detect_pivots
+        img = PILImage.open(io.BytesIO(png_bytes)).convert("RGBA")
+        pivots = detect_pivots(img, category=category)
+        return [
+            {"name": p.name, "x": round(p.x, 4), "y": round(p.y, 4), "confidence": round(p.confidence, 3)}
+            for p in pivots
+        ]
+
+    @staticmethod
+    def _run_pivot_detection_image(img, category: str) -> list[dict]:
+        """Detect pivots from a PIL Image directly."""
+        from game_art.processing.pivot import detect_pivots
+        img = img.convert("RGBA")
+        pivots = detect_pivots(img, category=category)
+        return [
+            {"name": p.name, "x": round(p.x, 4), "y": round(p.y, 4), "confidence": round(p.confidence, 3)}
+            for p in pivots
+        ]
 
     @staticmethod
     def requests_from_pack_data(pack_data: dict) -> list[SpriteRequest]:

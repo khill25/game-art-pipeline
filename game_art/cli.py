@@ -23,6 +23,14 @@ def _get_provider(args, config: GameArtConfig):
         from game_art.providers.sdwebui import SDWebUIProvider
         url = getattr(args, "url", None) or config.sdwebui_url
         return SDWebUIProvider(url=url, timeout=config.sdwebui_timeout)
+    elif provider_name == "comfyui":
+        from game_art.providers.comfyui import ComfyUIProvider
+        url = getattr(args, "url", None) or config.comfyui_url
+        checkpoint = getattr(args, "checkpoint", None) or config.comfyui_checkpoint
+        return ComfyUIProvider(
+            url=url, timeout=config.comfyui_timeout,
+            default_checkpoint=checkpoint,
+        )
     elif provider_name == "placeholder":
         from game_art.providers.placeholder import PlaceholderProvider
         return PlaceholderProvider()
@@ -103,8 +111,9 @@ def main():
     sprite_parser.add_argument("--category", "-c", default="item", help="Asset category (weapon, enemy, character, etc.)")
     sprite_parser.add_argument("--style", "-s", default="pixel_art", help="Art style (pixel_art)")
     sprite_parser.add_argument("--size", type=int, default=32, help="Output sprite size in pixels")
-    sprite_parser.add_argument("--provider", default=None, help="Image provider (placeholder, sdwebui)")
+    sprite_parser.add_argument("--provider", default=None, help="Image provider (placeholder, sdwebui, comfyui)")
     sprite_parser.add_argument("--url", default=None, help="Provider URL")
+    sprite_parser.add_argument("--checkpoint", default=None, help="Checkpoint model name (comfyui)")
     sprite_parser.add_argument("--palette", default=None, help="Comma-separated hex colors")
     sprite_parser.add_argument("--seed", type=int, default=-1, help="Random seed (-1 for random)")
     sprite_parser.set_defaults(func=cmd_generate_sprite)

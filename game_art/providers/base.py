@@ -64,6 +64,17 @@ class ImageProvider(ABC):
         """Check if the provider is reachable and ready. Returns True if healthy."""
         return True
 
+    async def txt2img_with_cleanup(self, params: GenerationParams) -> bytes:
+        """Generate an image with provider-side cleanup (e.g., background removal).
+
+        Providers that support GPU-side post-processing (like ComfyUI with rembg
+        nodes) should override this to perform cleanup in the same GPU pass.
+
+        Default: delegates to txt2img() with no extra cleanup.
+        Returns PNG bytes (RGBA if cleanup was applied).
+        """
+        return await self.txt2img(params)
+
     async def get_models(self) -> list[str]:
         """List available models. Returns empty list if not applicable."""
         return []

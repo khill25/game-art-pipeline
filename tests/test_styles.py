@@ -10,6 +10,15 @@ def test_pixel_art_build_prompt():
 
     assert "pixel art" in prompt
     assert "fire sword" in prompt
+    assert "weapon sprite" in prompt
+
+
+def test_pixel_art_build_prompt_v1():
+    style = PixelArtStyle(target_size=32, use_v2_prompts=False)
+    prompt = style.build_prompt("fire sword", category="weapon")
+
+    assert "pixel art" in prompt
+    assert "fire sword" in prompt
     assert "game weapon sprite" in prompt
 
 
