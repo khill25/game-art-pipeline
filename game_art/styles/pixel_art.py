@@ -18,6 +18,7 @@ CATEGORY_HINTS = {
     "character": "hero character sprite, game protagonist, full body, front-facing, single character",
     "pickup": "collectible item sprite, pickup icon, centered, single item only",
     "tile": "seamless game tile, top-down, tileable texture",
+    "clutter": "small ground decoration, top-down game prop",
     "icon": "game icon, UI element, clean simple design, single icon",
     "effect": "visual effect sprite, magic spell, glowing energy",
     "boss": "large boss creature sprite, imposing, detailed, full body, single character",

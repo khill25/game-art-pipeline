@@ -39,6 +39,10 @@ CATEGORY_POSITIVE = {
         "seamless game tile, top-down ground texture, tileable, fills entire frame, "
         "texture only"
     ),
+    "clutter": (
+        "small ground decoration sprite, isolated object, top-down, single small item, "
+        "transparent background"
+    ),
     "npc": (
         "NPC character sprite, full body, front-facing, single character only, "
         "no ground, no base, floating, isolated, white background"
@@ -81,6 +85,9 @@ CATEGORY_NEGATIVE = {
     ),
     "tile": (
         "objects, characters, frame, border, items, creatures, UI elements"
+    ),
+    "clutter": (
+        "character, person, weapon, UI, text, frame, border, large object, multiple items"
     ),
     "npc": (
         "base, pedestal, platform, ground circle, grass, shadow circle, "
