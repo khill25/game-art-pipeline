@@ -55,6 +55,11 @@ CATEGORY_POSITIVE = {
         "visual effect sprite, magic spell, glowing energy, isolated, "
         "transparent background"
     ),
+    "zone_effect": (
+        "game ground effect sprite, top-down view, circular energy pattern, "
+        "magic circle, spell effect on ground, glowing, isolated, "
+        "transparent background"
+    ),
 }
 
 # ── Category-specific negative additions ─────────────────────────────
@@ -98,6 +103,9 @@ CATEGORY_NEGATIVE = {
     ),
     "effect": (
         "person, character, weapon, ground, solid background"
+    ),
+    "zone_effect": (
+        "person, character, weapon, side view, perspective, solid background"
     ),
 }
 
